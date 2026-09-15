@@ -194,10 +194,14 @@ struct ClaudeUsage: Decodable {
                             percentUsed: window.utilization ?? 0, resetsAt: window.resetsAt,
                             menuBarRole: key == "five_hour" ? .session : key == "seven_day" ? .weekly : nil)
             }
-        if let fable = scopedLimits.first(where: {
-            $0.kind == "weekly_scoped" && $0.percent != nil && $0.isActive != false
+        let fableLimits = scopedLimits.filter {
+            $0.kind == "weekly_scoped" && $0.percent != nil
                 && $0.scope?.model?.displayName?.caseInsensitiveCompare("Fable") == .orderedSame
-        }), let percent = fable.percent {
+        }
+        // Claude displays valid allowances even when is_active is false.
+        // Prefer an active record if supplied, but do not hide the fallback.
+        if let fable = fableLimits.first(where: { $0.isActive != false }) ?? fableLimits.first,
+           let percent = fable.percent {
             // Prefer the named limit when both API representations are present.
             result.removeAll { $0.id == "seven_day_overage_included" }
             result.append(UsageWindow(id: "seven_day_overage_included", label: "Weekly · Fable",
