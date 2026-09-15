@@ -171,9 +171,30 @@ check("named Fable limit wins over legacy data and ignores malformed entries") {
         && UsageSnapshot(windows: windows, fetchedAt: .now).headline.isEmpty
 }
 
-check("explicitly inactive Fable limits are hidden") {
-    let json = #"{"limits": [{"kind": "weekly_scoped", "percent": 94, "scope": {"model": {"display_name": "Fable"}}, "is_active": false}]}"#
-    return try JSONDecoder.apiRawKeys.decode(ClaudeUsage.self, from: Data(json.utf8)).windows().isEmpty
+check("Fable matches Claude's usage page even when is_active is false") {
+    let json = """
+    {
+      "five_hour": {"utilization": 13, "resets_at": "2026-09-15T18:10:00+00:00"},
+      "seven_day": {"utilization": 5, "resets_at": "2026-09-19T17:00:00+00:00"},
+      "limits": [
+        {"kind": "session", "percent": 13, "is_active": true},
+        {"kind": "weekly_all", "percent": 5, "is_active": false},
+        {"kind": "weekly_scoped", "percent": 2, "resets_at": "2026-09-19T17:00:00+00:00",
+         "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null}, "is_active": false}
+      ]
+    }
+    """
+    let windows = try JSONDecoder.apiRawKeys.decode(ClaudeUsage.self, from: Data(json.utf8)).windows()
+    return windows.map(\.label) == ["Session (5h)", "Weekly · all models", "Weekly · Fable"]
+        && windows.map(\.percentUsed) == [13, 5, 2]
+        && windows.last?.resetsAt == ISO8601.date("2026-09-19T17:00:00+00:00")
+        && UsageSnapshot(windows: windows, fetchedAt: .now).headline.map(\.id) == ["five_hour", "seven_day"]
+}
+
+check("an inactive Fable allowance is still shown at zero usage") {
+    let json = #"{"limits": [{"kind": "weekly_scoped", "percent": 0, "scope": {"model": {"display_name": "Fable"}}, "is_active": false}]}"#
+    let windows = try JSONDecoder.apiRawKeys.decode(ClaudeUsage.self, from: Data(json.utf8)).windows()
+    return windows.count == 1 && windows[0].label == "Weekly · Fable" && windows[0].percentUsed == 0
 }
 
 check("an inactive Fable record does not shadow the active allowance") {
