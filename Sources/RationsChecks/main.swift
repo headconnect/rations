@@ -541,6 +541,24 @@ check("hub refuses any other upstream call and says when usage is not fetched ye
         && HubAPI.respond(to: hubRequest("GET", "/v0/management/api-call"), key: hubKey, accounts: hubAccounts).status == 405
 }
 
+check("hub port defaults only when unset, so a typed 0 still fails validation") {
+    let suite = "no.enso.rations.checks.hub"
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    let unset = UsageHub.port(defaults)
+    defaults.set(0, forKey: Settings.hubPort)
+    let zero = UsageHub.port(defaults)
+    defaults.set(9000, forKey: Settings.hubPort)
+    let custom = UsageHub.port(defaults)
+    defaults.removePersistentDomain(forName: suite)
+    return unset == 8318 && zero == 0 && custom == 9000
+}
+
+check("hub keys are random, 256-bit and URL-safe") {
+    guard let a = UsageHub.randomKey(), let b = UsageHub.randomKey() else { return false }
+    return a != b && a.count == 43 && a.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+}
+
 check("hub request parsing waits for the whole body") {
     let head = "POST /v0/management/api-call?x=1 HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 4\r\n\r\n"
     guard HubServer.parse(Data("POST / HTTP/1.1\r\nHost".utf8)) == .incomplete,

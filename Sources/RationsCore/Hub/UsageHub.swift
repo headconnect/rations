@@ -35,12 +35,13 @@ final class UsageHub {
         sync()
     }
 
-    static var port: Int {
-        let stored = UserDefaults.standard.integer(forKey: Settings.hubPort)
-        return stored == 0 ? Settings.defaultHubPort : stored
+    /// Only an absent value means the default; a typed 0 must still fail the
+    /// range check rather than quietly become 8318.
+    nonisolated static func port(_ defaults: UserDefaults = .standard) -> Int {
+        defaults.object(forKey: Settings.hubPort) as? Int ?? Settings.defaultHubPort
     }
 
-    var url: String { "http://127.0.0.1:\(Self.port)" }
+    var url: String { "http://127.0.0.1:\(Self.port())" }
 
     /// Accepts any non-blank key; T3 Code sends it back as typed.
     func setKey(_ newKey: String) {
@@ -56,11 +57,15 @@ final class UsageHub {
     }
 
     func regenerateKey() {
-        setKey(Self.randomKey())
+        guard let fresh = Self.randomKey() else {
+            keyError = Self.randomKeyError
+            return
+        }
+        setKey(fresh)
     }
 
     private func sync() {
-        let wanted = UserDefaults.standard.bool(forKey: Settings.hubEnabled) ? Self.port : nil
+        let wanted = UserDefaults.standard.bool(forKey: Settings.hubEnabled) ? Self.port() : nil
         guard wanted != serverPort else { return }
         stopServer()
         guard let wanted else { return }
@@ -122,7 +127,10 @@ final class UsageHub {
             if let stored = try TokenStore.loadHubKey(), !stored.isEmpty {
                 key = stored
             } else {
-                let fresh = Self.randomKey()
+                guard let fresh = Self.randomKey() else {
+                    status = .failed(Self.randomKeyError)
+                    return false
+                }
                 try TokenStore.saveHubKey(fresh)
                 key = fresh
             }
@@ -133,10 +141,13 @@ final class UsageHub {
         }
     }
 
-    /// 32 random bytes, base64url without padding.
-    static func randomKey() -> String {
+    private static let randomKeyError = "Could not generate a random key."
+
+    /// 32 random bytes, base64url without padding. nil if the system random
+    /// generator fails, rather than a key derived from the zeroed buffer.
+    nonisolated static func randomKey() -> String? {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return nil }
         return Data(bytes).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
