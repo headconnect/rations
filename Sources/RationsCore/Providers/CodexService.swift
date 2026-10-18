@@ -65,7 +65,7 @@ struct CodexService: UsageService {
         headers["ChatGPT-Account-Id"] = tokens.accountID
         let data = try await HTTP.get(Self.usageURL, headers: headers)
         let usage = try JSONDecoder.api.decode(CodexUsage.self, from: data)
-        return UsageSnapshot(windows: usage.windows(), fetchedAt: .now)
+        return UsageSnapshot(windows: usage.windows(), fetchedAt: .now, raw: data)
     }
 
     private static func tokens(from data: Data, previous: OAuthTokens?) throws -> OAuthTokens {

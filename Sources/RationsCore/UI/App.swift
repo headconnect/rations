@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private let updates = UpdateChecker()
+    /// Lazy only because it needs the store; created at launch.
+    private lazy var hub = UsageHub(store: store)
     /// Pinned to the button's trailing edge, which stays put when the label
     /// changes width, so the popover does not move with it.
     private let anchor = PassthroughView()
@@ -25,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Created on first use; closing hides it (`isReleasedWhenClosed` off) so
     /// the account rows keep their state between visits.
     private lazy var settingsWindow: NSWindow = {
-        let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(store: store)))
+        let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(store: store, hub: hub)))
         window.title = "Rations Settings"
         window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
@@ -35,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = Self.makeMainMenu()
+        _ = hub
         guard let button = statusItem.button else { return }
         let label = PassthroughHostingView(rootView: MenuBarLabel(store: store) { [statusItem] width in
             statusItem.length = width

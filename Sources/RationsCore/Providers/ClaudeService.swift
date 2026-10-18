@@ -59,7 +59,7 @@ struct ClaudeService: UsageService {
     func fetchUsage(_ tokens: OAuthTokens) async throws -> UsageSnapshot {
         let data = try await HTTP.get(Self.usageURL, headers: Self.headers(tokens))
         let usage = try JSONDecoder.apiRawKeys.decode(ClaudeUsage.self, from: data)
-        return UsageSnapshot(windows: usage.windows(), fetchedAt: .now)
+        return UsageSnapshot(windows: usage.windows(), fetchedAt: .now, raw: data)
     }
 
     private func exchange(_ body: [String: String], previous: OAuthTokens?) async throws -> OAuthTokens {

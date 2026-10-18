@@ -2,11 +2,13 @@ import ServiceManagement
 import SwiftUI
 
 /// The settings window: accounts first, then the global menu bar defaults
-/// (used by every account without its own overrides), then general.
+/// (used by every account without its own overrides), then general, then the
+/// usage hub.
 struct SettingsView: View {
     static let width: CGFloat = 400
 
     let store: AccountStore
+    let hub: UsageHub
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage(Settings.menuBarBars) private var showBars = true
     @AppStorage(Settings.menuBarPercent) private var showPercent = true
@@ -37,6 +39,8 @@ struct SettingsView: View {
             Toggle("Launch at login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
             Toggle("Check for updates (polls GitHub every 6 hours)", isOn: $checkForUpdates)
+            heading("Usage Hub").padding(.top, 4)
+            UsageHubSettings(hub: hub)
         }
         .toggleStyle(.checkbox)
         .font(.callout)

@@ -2,6 +2,7 @@
 // `--live` additionally fetches usage for every signed-in account and prints it.
 import AppKit
 import Foundation
+import Network
 @testable import RationsCore
 
 var failures = 0
@@ -9,6 +10,19 @@ var failures = 0
 func check(_ label: String, _ body: () throws -> Bool) {
     do {
         if try body() {
+            print("ok   \(label)")
+            return
+        }
+        print("FAIL \(label)")
+    } catch {
+        print("FAIL \(label): \(error)")
+    }
+    failures += 1
+}
+
+func check(_ label: String, _ body: () async throws -> Bool) async {
+    do {
+        if try await body() {
             print("ok   \(label)")
             return
         }
@@ -450,6 +464,194 @@ check("global menu bar options default to on") {
     defaults.removePersistentDomain(forName: suite)
     return fresh == MenuBarOptions() && !edited.weekly && edited.session
         && edited.weeklyCountdown && !edited.sessionCountdown
+}
+
+// MARK: Usage hub
+
+let hubKey = "secret-key"
+let claudeUsage = Data(#"{"five_hour":{"utilization":12.0,"resets_at":"2026-10-18T12:00:00+00:00"},"seven_day":null}"#.utf8)
+let hubAccounts = [
+    HubAccount(id: UUID(), provider: .claude, email: "a@example.com", chatGPTAccountID: nil, usage: claudeUsage),
+    HubAccount(id: UUID(), provider: .codex, email: nil, chatGPTAccountID: "ws-1", usage: nil),
+    HubAccount(id: UUID(), provider: .copilot, email: "octocat@example.com", chatGPTAccountID: nil, usage: Data("{}".utf8)),
+]
+
+func hubRequest(_ method: String, _ path: String, headers: [String: String] = ["authorization": "Bearer \(hubKey)"],
+                body: [String: Any]? = nil) -> HubAPI.Request {
+    HubAPI.Request(method: method, path: path, headers: headers,
+                   body: body.map { try! JSONSerialization.data(withJSONObject: $0) } ?? Data())
+}
+
+func hubJSON(_ response: HubAPI.Response) -> [String: Any] {
+    (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any] ?? [:]
+}
+
+func usageCall(_ account: HubAccount, url: String? = nil, method: String = "GET") -> HubAPI.Request {
+    hubRequest("POST", "/v0/management/api-call", body: [
+        "auth_index": account.id.uuidString, "method": method, "url": url ?? HubAPI.usageURLs[account.provider]!,
+        "header": ["Authorization": "Bearer $TOKEN$"],
+    ])
+}
+
+check("hub takes the address from an account label") {
+    HubAccount.email(fromLabel: "a@example.com (Max)") == "a@example.com"
+        && HubAccount.email(fromLabel: "a@example.com") == "a@example.com"
+        && HubAccount.email(fromLabel: "octocat") == nil && HubAccount.email(fromLabel: nil) == nil
+}
+
+check("hub refuses a missing, wrong or unset key") {
+    let files = "/v0/management/auth-files"
+    return HubAPI.respond(to: hubRequest("GET", files, headers: [:]), key: hubKey, accounts: hubAccounts).status == 401
+        && HubAPI.respond(to: hubRequest("GET", files, headers: ["authorization": "Bearer nope"]), key: hubKey, accounts: hubAccounts).status == 401
+        && HubAPI.respond(to: hubRequest("GET", files, headers: ["authorization": "Bearer "]), key: "", accounts: hubAccounts).status == 401
+        && HubAPI.respond(to: hubRequest("GET", files, headers: ["x-management-key": hubKey]), key: hubKey, accounts: hubAccounts).status == 200
+}
+
+check("hub lists Claude and Codex accounts in CLIProxyAPI's auth-files shape") {
+    let response = HubAPI.respond(to: hubRequest("GET", "/v0/management/auth-files"), key: hubKey, accounts: hubAccounts)
+    let files = hubJSON(response)["files"] as? [[String: Any]] ?? []
+    guard response.status == 200, files.count == 2 else { return false }
+    let claude = files[0], codex = files[1]
+    return claude["provider"] as? String == "claude" && claude["auth_index"] as? String == hubAccounts[0].id.uuidString
+        && claude["email"] as? String == "a@example.com" && claude["id_token"] == nil
+        && claude["disabled"] as? Bool == false
+        // T3 Code rejects null for optional fields, so absent ones are left out.
+        && codex["provider"] as? String == "codex" && codex.keys.contains("email") == false
+        && (codex["id_token"] as? [String: Any])?["chatgpt_account_id"] as? String == "ws-1"
+}
+
+check("hub answers a usage call with the cached response, unchanged") {
+    let response = HubAPI.respond(to: usageCall(hubAccounts[0]), key: hubKey, accounts: hubAccounts)
+    let json = hubJSON(response)
+    return response.status == 200 && json["status_code"] as? Int == 200
+        && (json["body"] as? String).map { Data($0.utf8) } == claudeUsage
+}
+
+check("hub refuses any other upstream call and says when usage is not fetched yet") {
+    let credits = HubAPI.respond(to: usageCall(hubAccounts[1], url: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"),
+                                 key: hubKey, accounts: hubAccounts)
+    let post = HubAPI.respond(to: usageCall(hubAccounts[0], method: "POST"), key: hubKey, accounts: hubAccounts)
+    let crossProvider = HubAPI.respond(to: usageCall(hubAccounts[0], url: HubAPI.usageURLs[.codex]!), key: hubKey, accounts: hubAccounts)
+    let notYet = HubAPI.respond(to: usageCall(hubAccounts[1]), key: hubKey, accounts: hubAccounts)
+    let copilot = HubAPI.respond(to: usageCall(hubAccounts[0], url: "https://api.github.com/copilot_internal/user"),
+                                 key: hubKey, accounts: [hubAccounts[2]])
+    return [credits, post, crossProvider].allSatisfy { hubJSON($0)["status_code"] as? Int == 403 }
+        && hubJSON(notYet)["status_code"] as? Int == 503
+        && copilot.status == 404
+        && HubAPI.respond(to: hubRequest("GET", "/v0/management/config"), key: hubKey, accounts: hubAccounts).status == 404
+        && HubAPI.respond(to: hubRequest("GET", "/v0/management/api-call"), key: hubKey, accounts: hubAccounts).status == 405
+}
+
+check("hub port defaults only when unset, so a typed 0 still fails validation") {
+    let suite = "no.enso.rations.checks.hub"
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    let unset = UsageHub.port(defaults)
+    defaults.set(0, forKey: Settings.hubPort)
+    let zero = UsageHub.port(defaults)
+    defaults.set(9000, forKey: Settings.hubPort)
+    let custom = UsageHub.port(defaults)
+    defaults.removePersistentDomain(forName: suite)
+    return unset == 8318 && zero == 0 && custom == 9000
+}
+
+check("hub keys are random, 256-bit and URL-safe") {
+    guard let a = UsageHub.randomKey(), let b = UsageHub.randomKey() else { return false }
+    return a != b && a.count == 43 && a.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+}
+
+check("hub request parsing waits for the whole body") {
+    let head = "POST /v0/management/api-call?x=1 HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 4\r\n\r\n"
+    guard HubServer.parse(Data("POST / HTTP/1.1\r\nHost".utf8)) == .incomplete,
+          HubServer.parse(Data((head + "{}").utf8)) == .incomplete,
+          case .complete(let request) = HubServer.parse(Data((head + "{\"\"}").utf8)) else { return false }
+    return request.method == "POST" && request.path == "/v0/management/api-call" && request.body == Data("{\"\"}".utf8)
+        && request.headers["host"] == "127.0.0.1"
+        && HubServer.parse(Data("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".utf8)) == .invalid
+}
+
+await check("hub server answers over loopback") {
+    let server = try HubServer(port: 0) { request in
+        HubAPI.respond(to: request, key: hubKey, accounts: hubAccounts)
+    }
+    try await server.start()
+    defer { server.stop() }
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(server.port!)/v0/management/api-call")!)
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(hubKey)", forHTTPHeaderField: "Authorization")
+    request.httpBody = usageCall(hubAccounts[0]).body
+    let (data, response) = try await URLSession.shared.data(for: request)
+    let json = (try JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    return (response as? HTTPURLResponse)?.statusCode == 200 && json?["status_code"] as? Int == 200
+}
+
+await check("hub server fails on an occupied port instead of waiting") {
+    let first = try HubServer(port: 0) { _ in HubAPI.Response(status: 200, body: Data()) }
+    try await first.start()
+    defer { first.stop() }
+    let second = try HubServer(port: first.port!) { _ in HubAPI.Response(status: 200, body: Data()) }
+    do {
+        try await second.start()
+        second.stop()
+        return false
+    } catch {
+        return true
+    }
+}
+
+/// True if the server closes `client` within `limit`; the client gives up after twice that.
+func closesWithin(_ limit: TimeInterval, port: UInt16, after action: @escaping @Sendable () -> Void = {}) async -> Bool {
+    let client = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+    let started = Date()
+    let closed: Bool = await withCheckedContinuation { continuation in
+        client.start(queue: .global())
+        client.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, isComplete, error in
+            continuation.resume(returning: isComplete || error != nil)
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2, execute: action)
+        DispatchQueue.global().asyncAfter(deadline: .now() + limit * 2) { client.cancel() }
+    }
+    client.cancel()
+    return closed && Date().timeIntervalSince(started) < limit
+}
+
+await check("hub server drops a connection that never sends a request") {
+    let server = try HubServer(port: 0, requestTimeout: 0.5) { _ in HubAPI.Response(status: 200, body: Data()) }
+    try await server.start()
+    defer { server.stop() }
+    return await closesWithin(1.5, port: server.port!)
+}
+
+await check("stopping the hub server closes open connections") {
+    let server = try HubServer(port: 0, requestTimeout: 60) { _ in HubAPI.Response(status: 200, body: Data()) }
+    try await server.start()
+    return await closesWithin(1.5, port: server.port!) { server.stop() }
+}
+
+await check("hub server takes a body of the full size limit however it arrives") {
+    let server = try HubServer(port: 0) { request in HubAPI.respond(to: request, key: hubKey, accounts: hubAccounts) }
+    try await server.start()
+    defer { server.stop() }
+    var body = Data(#"{"auth_index":"none","url":"x"}"#.utf8)
+    body.append(Data(repeating: UInt8(ascii: " "), count: HubServer.maxRequestSize - body.count))
+    let head = "POST /v0/management/api-call HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        + "Authorization: Bearer \(hubKey)\r\nContent-Length: \(body.count)\r\n\r\n"
+    // Everything but the last byte first, so the server sees more than the
+    // size limit buffered before the request is complete.
+    let client = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: server.port!)!, using: .tcp)
+    let statusLine: String = await withCheckedContinuation { continuation in
+        client.start(queue: .global())
+        client.send(content: Data(head.utf8) + body.dropLast(), completion: .contentProcessed { _ in })
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
+            client.send(content: body.suffix(1), completion: .contentProcessed { _ in })
+        }
+        client.receive(minimumIncompleteLength: 12, maximumLength: 64) { data, _, _, _ in
+            continuation.resume(returning: String(decoding: data ?? Data(), as: UTF8.self))
+        }
+    }
+    client.cancel()
+    // 404 is HubAPI's answer for the unknown account; 400 would be the size check.
+    return statusLine.hasPrefix("HTTP/1.1 404")
 }
 
 // MARK: Live (optional)
