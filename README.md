@@ -114,6 +114,13 @@ default; when on, Rations asks GitHub for the latest release every 6 hours
 and shows a link in the footer when it is newer than the running version.
 Nothing is downloaded or installed automatically.
 
+**Usage Hub.** Off by default. When on, Rations serves the signed-in Claude
+and Codex accounts' usage to [T3 Code](https://github.com/pingdotgg/t3code),
+which reads it as a [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+hub. In T3 Code, add a CLIProxyAPI hub with the URL and key shown here. The
+port defaults to 8318; the key is random, kept in the keychain (account `hub`),
+and can be replaced. See [Usage hub](#usage-hub) for what it answers.
+
 Settings are stored in the app's user defaults (`no.enso.rations`), the
 account list included — tags and names only, never tokens.
 
@@ -154,7 +161,24 @@ allowance from the API's `limits` array.
 The app talks only to anthropic.com, claude.ai, openai.com, chatgpt.com and
 github.com. With "Check for updates" on (off by default) it also asks
 api.github.com for this repository's latest release every 6 hours and shows a
-link in the popover when it is newer than the running version.
+link in the popover when it is newer than the running version. With the usage
+hub on (off by default) it also accepts connections on 127.0.0.1.
+
+## Usage hub
+
+The hub listens on 127.0.0.1 only and implements the two CLIProxyAPI
+management endpoints T3 Code reads quota through, both behind the key
+(`Authorization: Bearer <key>` or `X-Management-Key`):
+
+- `GET /v0/management/auth-files` lists the signed-in Claude and Codex
+  accounts: id, provider, email, and for Codex the ChatGPT workspace id.
+- `POST /v0/management/api-call` is, on a real hub, a request sent upstream
+  with the account's token. Here it only answers a GET of that account's usage
+  URL, with the response body from Rations' last check. Anything else gets
+  `status_code` 403, so T3 Code shows no Codex reset credits.
+
+It makes no upstream requests of its own and never returns tokens. Usage is as
+fresh as the [refresh schedule](#refresh-behaviour) makes it.
 
 ## Release
 
@@ -214,7 +238,7 @@ Export) or with `security export -t identities -f pkcs12`, then
 
 ```sh
 make build   # debug build
-make test    # checks: refresh policy, response parsing, PKCE, accounts (no Xcode needed)
+make test    # checks: refresh policy, response parsing, PKCE, accounts, usage hub (no Xcode needed)
 make app     # release build + app bundle in build/
 make release # DMG, signed and notarized when SIGN_IDENTITY/NOTARY_PROFILE are set
 make artwork # regenerate Resources/rations.icns and the DMG background
@@ -229,6 +253,7 @@ Sources/RationsCore/
   Auth/        PKCE, JWT claims, keychain vault + migration, localhost callback server, private sign-in window
   Providers/   ClaudeService, CodexService, CopilotService, shared HTTP helpers
   Scheduler/   RefreshPolicy (pure), AccountStore (accounts + vault), AccountMonitor (state + polling loop)
+  Hub/         usage hub for T3 Code: HubAPI (pure routing), HubServer (loopback HTTP), UsageHub (settings + state)
   UI/          status item + popover (App), menu bar label, per-account section, settings, formatting
 Sources/rations/        main.swift, launches the app
 Sources/RationsChecks/  check runner used by `make test`

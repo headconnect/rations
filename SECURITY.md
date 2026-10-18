@@ -13,7 +13,7 @@ Use [GitHub's private vulnerability reporting](https://github.com/headconnect/ra
 
 ## Scope
 
-The primary vulnerabilities in scope here would be leakage of tokens from the keychain or logs, localhost callback accepting something that it shouldnt or being misdirected somehow, hijacked sign-in flows, update check manipulation, unwanted interaction with the host OS, etc. 
+The primary vulnerabilities in scope here would be leakage of tokens from the keychain or logs, localhost callback accepting something that it shouldnt or being misdirected somehow, the opt-in usage hub answering anything beyond cached usage or being reachable from outside the machine, hijacked sign-in flows, update check manipulation, unwanted interaction with the host OS, etc. 
 
 Basically - this tool is designed to just give an overview of the remaining usage for the AI subscriptions in scope. 
 

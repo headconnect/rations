@@ -19,6 +19,19 @@ func check(_ label: String, _ body: () throws -> Bool) {
     failures += 1
 }
 
+func check(_ label: String, _ body: () async throws -> Bool) async {
+    do {
+        if try await body() {
+            print("ok   \(label)")
+            return
+        }
+        print("FAIL \(label)")
+    } catch {
+        print("FAIL \(label): \(error)")
+    }
+    failures += 1
+}
+
 // MARK: RefreshPolicy
 
 check("policy starts at base") { RefreshPolicy().interval == 5 * 60 }
@@ -450,6 +463,121 @@ check("global menu bar options default to on") {
     defaults.removePersistentDomain(forName: suite)
     return fresh == MenuBarOptions() && !edited.weekly && edited.session
         && edited.weeklyCountdown && !edited.sessionCountdown
+}
+
+// MARK: Usage hub
+
+let hubKey = "secret-key"
+let claudeUsage = Data(#"{"five_hour":{"utilization":12.0,"resets_at":"2026-10-18T12:00:00+00:00"},"seven_day":null}"#.utf8)
+let hubAccounts = [
+    HubAccount(id: UUID(), provider: .claude, email: "a@example.com", chatGPTAccountID: nil, usage: claudeUsage),
+    HubAccount(id: UUID(), provider: .codex, email: nil, chatGPTAccountID: "ws-1", usage: nil),
+    HubAccount(id: UUID(), provider: .copilot, email: "octocat@example.com", chatGPTAccountID: nil, usage: Data("{}".utf8)),
+]
+
+func hubRequest(_ method: String, _ path: String, headers: [String: String] = ["authorization": "Bearer \(hubKey)"],
+                body: [String: Any]? = nil) -> HubAPI.Request {
+    HubAPI.Request(method: method, path: path, headers: headers,
+                   body: body.map { try! JSONSerialization.data(withJSONObject: $0) } ?? Data())
+}
+
+func hubJSON(_ response: HubAPI.Response) -> [String: Any] {
+    (try? JSONSerialization.jsonObject(with: response.body)) as? [String: Any] ?? [:]
+}
+
+func usageCall(_ account: HubAccount, url: String? = nil, method: String = "GET") -> HubAPI.Request {
+    hubRequest("POST", "/v0/management/api-call", body: [
+        "auth_index": account.id.uuidString, "method": method, "url": url ?? HubAPI.usageURLs[account.provider]!,
+        "header": ["Authorization": "Bearer $TOKEN$"],
+    ])
+}
+
+check("hub takes the address from an account label") {
+    HubAccount.email(fromLabel: "a@example.com (Max)") == "a@example.com"
+        && HubAccount.email(fromLabel: "a@example.com") == "a@example.com"
+        && HubAccount.email(fromLabel: "octocat") == nil && HubAccount.email(fromLabel: nil) == nil
+}
+
+check("hub refuses a missing, wrong or unset key") {
+    let files = "/v0/management/auth-files"
+    return HubAPI.respond(to: hubRequest("GET", files, headers: [:]), key: hubKey, accounts: hubAccounts).status == 401
+        && HubAPI.respond(to: hubRequest("GET", files, headers: ["authorization": "Bearer nope"]), key: hubKey, accounts: hubAccounts).status == 401
+        && HubAPI.respond(to: hubRequest("GET", files, headers: ["authorization": "Bearer "]), key: "", accounts: hubAccounts).status == 401
+        && HubAPI.respond(to: hubRequest("GET", files, headers: ["x-management-key": hubKey]), key: hubKey, accounts: hubAccounts).status == 200
+}
+
+check("hub lists Claude and Codex accounts in CLIProxyAPI's auth-files shape") {
+    let response = HubAPI.respond(to: hubRequest("GET", "/v0/management/auth-files"), key: hubKey, accounts: hubAccounts)
+    let files = hubJSON(response)["files"] as? [[String: Any]] ?? []
+    guard response.status == 200, files.count == 2 else { return false }
+    let claude = files[0], codex = files[1]
+    return claude["provider"] as? String == "claude" && claude["auth_index"] as? String == hubAccounts[0].id.uuidString
+        && claude["email"] as? String == "a@example.com" && claude["id_token"] == nil
+        && claude["disabled"] as? Bool == false
+        // T3 Code rejects null for optional fields, so absent ones are left out.
+        && codex["provider"] as? String == "codex" && codex.keys.contains("email") == false
+        && (codex["id_token"] as? [String: Any])?["chatgpt_account_id"] as? String == "ws-1"
+}
+
+check("hub answers a usage call with the cached response, unchanged") {
+    let response = HubAPI.respond(to: usageCall(hubAccounts[0]), key: hubKey, accounts: hubAccounts)
+    let json = hubJSON(response)
+    return response.status == 200 && json["status_code"] as? Int == 200
+        && (json["body"] as? String).map { Data($0.utf8) } == claudeUsage
+}
+
+check("hub refuses any other upstream call and says when usage is not fetched yet") {
+    let credits = HubAPI.respond(to: usageCall(hubAccounts[1], url: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"),
+                                 key: hubKey, accounts: hubAccounts)
+    let post = HubAPI.respond(to: usageCall(hubAccounts[0], method: "POST"), key: hubKey, accounts: hubAccounts)
+    let crossProvider = HubAPI.respond(to: usageCall(hubAccounts[0], url: HubAPI.usageURLs[.codex]!), key: hubKey, accounts: hubAccounts)
+    let notYet = HubAPI.respond(to: usageCall(hubAccounts[1]), key: hubKey, accounts: hubAccounts)
+    let copilot = HubAPI.respond(to: usageCall(hubAccounts[0], url: "https://api.github.com/copilot_internal/user"),
+                                 key: hubKey, accounts: [hubAccounts[2]])
+    return [credits, post, crossProvider].allSatisfy { hubJSON($0)["status_code"] as? Int == 403 }
+        && hubJSON(notYet)["status_code"] as? Int == 503
+        && copilot.status == 404
+        && HubAPI.respond(to: hubRequest("GET", "/v0/management/config"), key: hubKey, accounts: hubAccounts).status == 404
+        && HubAPI.respond(to: hubRequest("GET", "/v0/management/api-call"), key: hubKey, accounts: hubAccounts).status == 405
+}
+
+check("hub request parsing waits for the whole body") {
+    let head = "POST /v0/management/api-call?x=1 HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 4\r\n\r\n"
+    guard HubServer.parse(Data("POST / HTTP/1.1\r\nHost".utf8)) == .incomplete,
+          HubServer.parse(Data((head + "{}").utf8)) == .incomplete,
+          case .complete(let request) = HubServer.parse(Data((head + "{\"\"}").utf8)) else { return false }
+    return request.method == "POST" && request.path == "/v0/management/api-call" && request.body == Data("{\"\"}".utf8)
+        && request.headers["host"] == "127.0.0.1"
+        && HubServer.parse(Data("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n".utf8)) == .invalid
+}
+
+await check("hub server answers over loopback") {
+    let server = try HubServer(port: 0) { request in
+        HubAPI.respond(to: request, key: hubKey, accounts: hubAccounts)
+    }
+    try await server.start()
+    defer { server.stop() }
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(server.port!)/v0/management/api-call")!)
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(hubKey)", forHTTPHeaderField: "Authorization")
+    request.httpBody = usageCall(hubAccounts[0]).body
+    let (data, response) = try await URLSession.shared.data(for: request)
+    let json = (try JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    return (response as? HTTPURLResponse)?.statusCode == 200 && json?["status_code"] as? Int == 200
+}
+
+await check("hub server fails on an occupied port instead of waiting") {
+    let first = try HubServer(port: 0) { _ in HubAPI.Response(status: 200, body: Data()) }
+    try await first.start()
+    defer { first.stop() }
+    let second = try HubServer(port: first.port!) { _ in HubAPI.Response(status: 200, body: Data()) }
+    do {
+        try await second.start()
+        second.stop()
+        return false
+    } catch {
+        return true
+    }
 }
 
 // MARK: Live (optional)

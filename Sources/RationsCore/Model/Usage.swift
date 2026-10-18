@@ -29,6 +29,9 @@ struct UsageWindow: Equatable, Identifiable {
 struct UsageSnapshot: Equatable {
     let windows: [UsageWindow]
     let fetchedAt: Date
+    /// The provider's response body as received, which the usage hub hands to
+    /// T3 Code unchanged. nil for providers the hub does not serve.
+    var raw: Data? = nil
 
     /// The short-term and long-term limits, e.g. the 5-hour session and the
     /// weekly cap; per-model and overage windows are left to the popover.

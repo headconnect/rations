@@ -12,6 +12,7 @@ enum TokenStore {
     /// 1.x only ever ran as headroom.
     static let legacyService = "no.enso.headroom"
     private static let vaultAccount = "accounts"
+    private static let hubAccount = "hub"
 
     /// The stored JSON. `version` is there so a later format change can tell
     /// what it is reading; the keys are account ids.
@@ -42,6 +43,16 @@ enum TokenStore {
 
     static func save(_ tokens: [UUID: OAuthTokens]) throws {
         try write(try JSONEncoder().encode(Vault(tokens)), to: vaultAccount)
+    }
+
+    /// The usage hub's management key, an item of its own so turning the hub
+    /// on or off never rewrites the account vault. nil when none is stored.
+    static func loadHubKey() throws -> String? {
+        try read(hubAccount).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    static func saveHubKey(_ key: String) throws {
+        try write(Data(key.utf8), to: hubAccount)
     }
 
     /// The vault written under a previous name; nil when there is none.
