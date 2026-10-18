@@ -2,24 +2,32 @@ import Foundation
 import Network
 
 /// Minimal HTTP/1.1 server on 127.0.0.1 for the usage hub: one request per
-/// connection, answered by `handler`, then closed.
+/// connection, answered by `handler`, then closed. Every connection is closed
+/// by its deadline at the latest, and all of them when the server stops.
 final class HubServer: @unchecked Sendable {
     typealias Handler = @Sendable (HubAPI.Request) async -> HubAPI.Response
 
     /// Requests carry a small JSON body at most; anything bigger is refused.
     static let maxRequestSize = 64 * 1024
+    /// T3 Code polls a handful of accounts at a time; more is someone else.
+    static let maxConnections = 16
 
     private let listener: NWListener
     private let handler: Handler
+    private let requestTimeout: TimeInterval
     private let queue = DispatchQueue(label: "no.enso.rations.hub")
+    /// Open connections, touched on `queue` only.
+    private var connections: [ObjectIdentifier: NWConnection] = [:]
 
-    /// Port 0 picks a free one; read it back from `port`.
-    init(port: UInt16, handler: @escaping Handler) throws {
+    /// Port 0 picks a free one; read it back from `port`. `requestTimeout`
+    /// bounds a connection from accept to response.
+    init(port: UInt16, requestTimeout: TimeInterval = 10, handler: @escaping Handler) throws {
         guard let endpointPort = NWEndpoint.Port(rawValue: port) else { throw ServiceError.noFreePort }
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: endpointPort)
         listener = try NWListener(using: parameters)
+        self.requestTimeout = requestTimeout
         self.handler = handler
     }
 
@@ -52,9 +60,25 @@ final class HubServer: @unchecked Sendable {
 
     func stop() {
         listener.cancel()
+        queue.async { [self] in
+            connections.values.forEach { $0.cancel() }
+            connections.removeAll()
+        }
     }
 
+    /// On `queue`, like every listener and connection callback.
     private func accept(_ connection: NWConnection) {
+        guard connections.count < Self.maxConnections else { return connection.cancel() }
+        let id = ObjectIdentifier(connection)
+        connections[id] = connection
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .cancelled, .failed: self?.connections[id] = nil
+            default: break
+            }
+        }
+        // A no-op once the response has gone out and closed it.
+        queue.asyncAfter(deadline: .now() + requestTimeout) { connection.cancel() }
         connection.start(queue: queue)
         receive(connection, buffer: Data())
     }
@@ -70,7 +94,8 @@ final class HubServer: @unchecked Sendable {
                     let response = await self.handler(request)
                     self.send(response, on: connection)
                 }
-            case .incomplete where error == nil && !isComplete && buffer.count <= Self.maxRequestSize:
+            // parse() bounds the headers and the body, each to maxRequestSize.
+            case .incomplete where error == nil && !isComplete:
                 receive(connection, buffer: buffer)
             case .incomplete, .invalid:
                 send(HubAPI.Response(status: 400, body: Data(#"{"error":"bad request"}"#.utf8)), on: connection)

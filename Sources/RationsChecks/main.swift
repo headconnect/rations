@@ -2,6 +2,7 @@
 // `--live` additionally fetches usage for every signed-in account and prints it.
 import AppKit
 import Foundation
+import Network
 @testable import RationsCore
 
 var failures = 0
@@ -596,6 +597,61 @@ await check("hub server fails on an occupied port instead of waiting") {
     } catch {
         return true
     }
+}
+
+/// True if the server closes `client` within `limit`; the client gives up after twice that.
+func closesWithin(_ limit: TimeInterval, port: UInt16, after action: @escaping @Sendable () -> Void = {}) async -> Bool {
+    let client = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+    let started = Date()
+    let closed: Bool = await withCheckedContinuation { continuation in
+        client.start(queue: .global())
+        client.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, isComplete, error in
+            continuation.resume(returning: isComplete || error != nil)
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2, execute: action)
+        DispatchQueue.global().asyncAfter(deadline: .now() + limit * 2) { client.cancel() }
+    }
+    client.cancel()
+    return closed && Date().timeIntervalSince(started) < limit
+}
+
+await check("hub server drops a connection that never sends a request") {
+    let server = try HubServer(port: 0, requestTimeout: 0.5) { _ in HubAPI.Response(status: 200, body: Data()) }
+    try await server.start()
+    defer { server.stop() }
+    return await closesWithin(1.5, port: server.port!)
+}
+
+await check("stopping the hub server closes open connections") {
+    let server = try HubServer(port: 0, requestTimeout: 60) { _ in HubAPI.Response(status: 200, body: Data()) }
+    try await server.start()
+    return await closesWithin(1.5, port: server.port!) { server.stop() }
+}
+
+await check("hub server takes a body of the full size limit however it arrives") {
+    let server = try HubServer(port: 0) { request in HubAPI.respond(to: request, key: hubKey, accounts: hubAccounts) }
+    try await server.start()
+    defer { server.stop() }
+    var body = Data(#"{"auth_index":"none","url":"x"}"#.utf8)
+    body.append(Data(repeating: UInt8(ascii: " "), count: HubServer.maxRequestSize - body.count))
+    let head = "POST /v0/management/api-call HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        + "Authorization: Bearer \(hubKey)\r\nContent-Length: \(body.count)\r\n\r\n"
+    // Everything but the last byte first, so the server sees more than the
+    // size limit buffered before the request is complete.
+    let client = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: server.port!)!, using: .tcp)
+    let statusLine: String = await withCheckedContinuation { continuation in
+        client.start(queue: .global())
+        client.send(content: Data(head.utf8) + body.dropLast(), completion: .contentProcessed { _ in })
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
+            client.send(content: body.suffix(1), completion: .contentProcessed { _ in })
+        }
+        client.receive(minimumIncompleteLength: 12, maximumLength: 64) { data, _, _, _ in
+            continuation.resume(returning: String(decoding: data ?? Data(), as: UTF8.self))
+        }
+    }
+    client.cancel()
+    // 404 is HubAPI's answer for the unknown account; 400 would be the size check.
+    return statusLine.hasPrefix("HTTP/1.1 404")
 }
 
 // MARK: Live (optional)
