@@ -42,3 +42,19 @@ struct Account: Codable, Identifiable, Equatable {
         return moved
     }
 }
+
+extension Account {
+    /// The synthesized decoding, except that a malformed gauge list is read
+    /// lossily (or dropped) rather than failing the account, and with it the
+    /// whole account list.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        provider = try values.decode(Provider.self, forKey: .provider)
+        tag = try values.decode(String.self, forKey: .tag)
+        name = try values.decode(String.self, forKey: .name)
+        menuBar = try values.decodeIfPresent(MenuBarOptions.self, forKey: .menuBar)
+        icon = try values.decodeIfPresent(Data.self, forKey: .icon)
+        gauges = (try? values.decodeIfPresent(LossyList<Gauge>.self, forKey: .gauges))?.elements
+    }
+}

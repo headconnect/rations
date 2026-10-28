@@ -29,6 +29,8 @@ struct AntigravityService: UsageService {
     func beginSignIn() async throws -> PendingSignIn {
         // Before the browser opens, so a missing install fails straight away.
         _ = try await AntigravityClient.secret()
+        // The lookup is shared and does not stop for us; we do.
+        try Task.checkCancellation()
         let pkce = PKCE()
         let server = try await CallbackServer.start(ports: Self.callbackPorts, path: Self.callbackPath)
         let redirectURI = "http://localhost:\(server.port)\(Self.callbackPath)"

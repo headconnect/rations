@@ -127,6 +127,9 @@ final class AccountMonitor: Identifiable {
         guard !store.isSigningIn else { return }
         runSignInStep { [self] in
             let pending = try await service.beginSignIn()
+            // Cancelled while it was starting (a removal, Cancel): close what
+            // it opened instead of sending the browser off for a gone account.
+            guard !Task.isCancelled else { return pending.cancel() }
             pendingSignIn = pending
             status = .signingIn
             if case .deviceCode(let code) = pending.mode {

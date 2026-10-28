@@ -65,31 +65,34 @@ private struct GaugeView: View {
             } else {
                 AccountLabel(account: account, height: 14)
             }
-            let windows = gauge.windows
-            if windows.isEmpty {
+            // No limits chosen (or no usage yet). Pinned limits that are all
+            // missing still draw their empty tracks and dashes below.
+            if gauge.slots.isEmpty {
                 Text("–")
             } else {
                 if options.bars {
                     VStack(spacing: 2) {
-                        ForEach(windows) { MiniBar(percent: $0.percentUsed) }
+                        ForEach(Array(gauge.slots.enumerated()), id: \.offset) { MiniBar(percent: $0.element?.percentUsed) }
                     }
                 }
                 if options.percent {
-                    if windows.contains(where: { options.showsCountdown(for: $0, pinned: gauge.pinned) }) {
+                    if gauge.windows.contains(where: { options.showsCountdown(for: $0, pinned: gauge.pinned) }) {
                         // Local redraws only; the account's network schedule is unchanged.
                         TimelineView(.everyMinute) { context in
-                            values(windows, options: options, now: context.date)
+                            values(options: options, now: context.date)
                         }
                     } else {
-                        values(windows, options: options, now: .now)
+                        values(options: options, now: .now)
                     }
                 }
             }
         }
     }
 
-    private func values(_ windows: [UsageWindow], options: MenuBarOptions, now: Date) -> some View {
-        Text(windows.map { Format.menuBarValue($0, options: options, pinned: gauge.pinned, now: now) }.joined(separator: "/"))
+    /// A missing pinned limit reads "–" in its place.
+    private func values(options: MenuBarOptions, now: Date) -> some View {
+        Text(gauge.slots.map { $0.map { Format.menuBarValue($0, options: options, pinned: gauge.pinned, now: now) } ?? "–" }
+            .joined(separator: "/"))
     }
 }
 
@@ -110,13 +113,16 @@ struct SpacerView: View {
     }
 }
 
+/// nil is a limit that is not reported: the empty track only.
 private struct MiniBar: View {
-    let percent: Double
+    let percent: Double?
 
     var body: some View {
         ZStack(alignment: .leading) {
             Capsule().fill(.primary.opacity(0.25))
-            Capsule().fill(Format.tint(percent)).frame(width: max(3, 14 * percent / 100))
+            if let percent {
+                Capsule().fill(Format.tint(percent)).frame(width: max(3, 14 * percent / 100))
+            }
         }
         .frame(width: 14, height: 3.5)
     }

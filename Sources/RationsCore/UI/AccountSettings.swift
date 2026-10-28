@@ -361,7 +361,8 @@ private struct GaugeSettings: View {
             get: { monitor.account.gauges != nil },
             set: { on in
                 var account = monitor.account
-                account.gauges = on ? Gauge.initial(for: monitor.snapshot) : nil
+                let options = MenuBarOptions.resolve(for: account, global: .global())
+                account.gauges = on ? Gauge.initial(for: monitor.snapshot, options: options) : nil
                 store.update(account)
             }
         )

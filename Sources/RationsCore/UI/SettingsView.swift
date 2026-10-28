@@ -187,7 +187,8 @@ struct MenuBarOptionToggles: View {
         }
         Section {
             if hasSession {
-                Toggle("Session", isOn: $sessionCountdown).disabled(!percent || (!pinned && !session))
+                // Globally it also covers custom gauges, which show sessions regardless.
+                Toggle("Session", isOn: $sessionCountdown).disabled(!percent || (provider != nil && !pinned && !session))
             }
             Toggle(provider == .copilot ? "Monthly quota" : provider == nil ? "Weekly / monthly" : "Weekly",
                    isOn: $weeklyCountdown)
