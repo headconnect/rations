@@ -9,7 +9,7 @@ enum HTTP {
         return try await send(request)
     }
 
-    static func postJSON(_ url: URL, body: [String: String], headers: [String: String] = [:]) async throws -> Data {
+    static func postJSON(_ url: URL, body: some Encodable, headers: [String: String] = [:]) async throws -> Data {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -31,7 +31,10 @@ enum HTTP {
     private static func send(_ request: URLRequest) async throws -> Data {
         var request = request
         request.timeoutInterval = 30
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        // Antigravity sends the client's own; everything else identifies as Rations.
+        if request.value(forHTTPHeaderField: "User-Agent") == nil {
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0

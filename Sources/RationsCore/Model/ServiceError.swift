@@ -11,6 +11,8 @@ enum ServiceError: LocalizedError, Equatable {
     case missingCode
     case noFreePort
     case keychain(String)
+    /// Antigravity's client secret could not be read from a local install.
+    case antigravityClient(String)
 
     var errorDescription: String? {
         switch self {
@@ -23,6 +25,7 @@ enum ServiceError: LocalizedError, Equatable {
         case .missingCode: "No authorization code received."
         case .noFreePort: "Could not open a local port for the sign-in callback."
         case .keychain(let message): "Keychain error: \(message)"
+        case .antigravityClient(let message): "Antigravity's sign-in client was not found. \(message)"
         }
     }
 }

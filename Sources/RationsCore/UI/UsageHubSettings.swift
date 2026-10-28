@@ -11,25 +11,31 @@ struct UsageHubSettings: View {
     @FocusState private var keyFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle("Serve usage to T3 Code as a CLIProxyAPI hub", isOn: $enabled)
+        Form {
+            Section {
+                Toggle(isOn: $enabled) {
+                    Text("Serve usage to T3 Code")
+                    Text("As a CLIProxyAPI hub on 127.0.0.1")
+                }
+            } footer: {
+                if !enabled {
+                    explanation
+                }
+            }
             if enabled {
-                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
-                    GridRow {
-                        Text("Hub URL")
+                Section {
+                    LabeledContent("Hub URL") {
                         HStack {
                             Text(hub.url).textSelection(.enabled).monospaced()
                             copyButton(hub.url, help: "Copy the hub URL")
-                            Spacer()
-                            TextField("Port", value: $port, format: .number.grouping(.never))
-                                .frame(width: 60)
-                                .help("Port on 127.0.0.1, 1024–65535")
                         }
                     }
-                    GridRow {
-                        Text("Key")
+                    TextField("Port", value: $port, format: .number.grouping(.never))
+                        .help("Port on 127.0.0.1, 1024–65535")
+                    LabeledContent("Management key") {
                         HStack {
                             TextField("Management key", text: $key)
+                                .labelsHidden()
                                 .monospaced()
                                 .focused($keyFocused)
                                 .onSubmit { hub.setKey(key) }
@@ -42,33 +48,40 @@ struct UsageHubSettings: View {
                                 .help("Generate a new random key")
                         }
                     }
+                    LabeledContent("Status") { statusText }
+                    if let error = hub.keyError {
+                        Text("Key not saved: \(error)").font(.caption).foregroundStyle(.red)
+                    }
+                } footer: {
+                    explanation
                 }
-                .textFieldStyle(.roundedBorder)
-                statusText
-                if let error = hub.keyError {
-                    Text("Key not saved: \(error)").font(.caption).foregroundStyle(.red)
-                }
-                Text("""
-                    In T3 Code, add a CLIProxyAPI hub with this URL and key. It gets the signed-in \
-                    Claude and Codex accounts' usage as of Rations' last check; no tokens leave Rations \
-                    and it causes no extra requests to Anthropic or OpenAI.
-                    """)
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .settingsPane()
         .onAppear { key = hub.key }
         .onChange(of: hub.key) { _, new in key = new }
+    }
+
+    private var explanation: some View {
+        Text("""
+            In T3 Code, add a CLIProxyAPI hub with this URL and key. It gets the signed-in \
+            Claude and Codex accounts' usage as of Rations' last check; no tokens leave Rations \
+            and it causes no extra requests to Anthropic or OpenAI.
+            """)
+            .font(.caption).foregroundStyle(.secondary)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder private var statusText: some View {
         switch hub.status {
         case .off:
-            Text("Starting…").font(.caption).foregroundStyle(.secondary)
+            Text("Starting…").foregroundStyle(.secondary)
         case .listening(let port):
-            Text("Listening on 127.0.0.1:\(String(port))").font(.caption).foregroundStyle(.green)
+            Text("Listening on 127.0.0.1:\(String(port))").foregroundStyle(.green)
         case .failed(let message):
-            Text(message).font(.caption).foregroundStyle(.red)
+            Text(message).foregroundStyle(.red)
         }
     }
 

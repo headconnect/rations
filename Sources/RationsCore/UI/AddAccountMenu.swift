@@ -5,12 +5,14 @@ struct AddAccountMenu: View {
     enum Style {
         /// Full-width bordered button, for the settings page and the empty popover.
         case prominent
-        /// Plus icon, for the popover footer.
+        /// Plus icon, for the popover footer and under the settings list.
         case compact
     }
 
     let store: AccountStore
     var style: Style = .prominent
+    /// Called with the new account, e.g. to select it in the settings list.
+    var onAdd: (Account) -> Void = { _ in }
 
     var body: some View {
         switch style {
@@ -32,7 +34,7 @@ struct AddAccountMenu: View {
 
     private var providers: some View {
         ForEach(Provider.allCases) { provider in
-            Button(provider.name) { store.add(provider: provider) }
+            Button(provider.name) { onAdd(store.add(provider: provider)) }
         }
     }
 }

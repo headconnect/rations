@@ -6,7 +6,8 @@ struct OAuthTokens: Codable, Equatable {
     var expiresAt: Date?
     /// Display label for the signed-in account (email, plan).
     var account: String?
-    /// Codex only: ChatGPT account id, sent as a request header.
+    /// Codex: ChatGPT account id, sent as a request header. Antigravity: the
+    /// Cloud Code project the quota summary is asked for.
     var accountID: String?
 
     /// True when the access token expires within a few minutes.

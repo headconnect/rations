@@ -38,8 +38,11 @@ struct MenuBarOptions: Codable, Equatable {
         }
     }
 
-    func showsCountdown(for window: UsageWindow) -> Bool {
+    /// A pinned window was chosen by hand, so the session/weekly toggles do
+    /// not apply and only its term picks the countdown preference.
+    func showsCountdown(for window: UsageWindow, pinned: Bool = false) -> Bool {
         guard percent, window.percentUsed >= 100, window.resetsAt != nil else { return false }
+        if pinned { return window.term == .short ? sessionCountdown : weeklyCountdown }
         switch window.menuBarRole {
         case .session: return session && sessionCountdown
         case .weekly: return weekly && weeklyCountdown

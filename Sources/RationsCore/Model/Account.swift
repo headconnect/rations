@@ -14,6 +14,9 @@ struct Account: Codable, Identifiable, Equatable {
     /// Optional PNG shown instead of the tag, already scaled down (see
     /// AccountIcon), so it is small enough to live next to the metadata.
     var icon: Data?
+    /// A customised menu bar entry: gauges and spacers in order. nil is the
+    /// automatic gauge.
+    var gauges: [Gauge]?
 
     /// Trimmed and capped by grapheme cluster so an emoji is one character;
     /// empty falls back to the provider's letter.
