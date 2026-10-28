@@ -3,6 +3,9 @@ import Foundation
 /// One rate-limit window, e.g. the 5-hour session or the weekly cap.
 struct UsageWindow: Equatable, Identifiable {
     enum MenuBarRole { case session, weekly, quota }
+    /// Which countdown preference a pinned window follows: the 5-hour kind or
+    /// the weekly/monthly kind.
+    enum Term { case short, long }
 
     let id: String
     let label: String
@@ -13,13 +16,16 @@ struct UsageWindow: Equatable, Identifiable {
     let detail: String?
     /// nil keeps model-specific and extra usage limits in the popover only.
     let menuBarRole: MenuBarRole?
+    let term: Term
 
+    /// `term` defaults from the role: sessions are short, everything else long.
     init(id: String, label: String, percentUsed: Double, resetsAt: Date?, detail: String? = nil,
-         menuBarRole: MenuBarRole? = nil) {
+         menuBarRole: MenuBarRole? = nil, term: Term? = nil) {
         self.id = id
         self.label = label
         self.detail = detail
         self.menuBarRole = menuBarRole
+        self.term = term ?? (menuBarRole == .session ? .short : .long)
         self.percentUsed = min(max(percentUsed, 0), 100)
         // Whole seconds, so a countdown does not wobble on sub-second jitter.
         self.resetsAt = resetsAt.map { Date(timeIntervalSince1970: $0.timeIntervalSince1970.rounded(.down)) }

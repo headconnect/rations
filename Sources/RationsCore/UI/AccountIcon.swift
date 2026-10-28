@@ -10,11 +10,11 @@ enum AccountIcon {
     /// Asks for an image file and returns it scaled down, or nil if cancelled
     /// or unreadable.
     @MainActor
-    static func pick() -> Data? {
+    static func pick(message: String = "Choose an image for this account's menu bar icon") -> Data? {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = false
-        panel.message = "Choose an image for this account's menu bar icon"
+        panel.message = message
         guard panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) else { return nil }
         return png(image)
     }

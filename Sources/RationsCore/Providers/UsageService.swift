@@ -3,7 +3,7 @@ import Foundation
 /// A sign-in in progress. The browser has been opened to `url`.
 struct PendingSignIn {
     enum Mode: Equatable {
-        /// The browser redirects to our local callback server (Codex).
+        /// The browser redirects to our local callback server (Codex, Antigravity).
         case callback
         /// The provider shows a code the user pastes back (Claude).
         case pastedCode
@@ -31,6 +31,7 @@ extension Provider {
         case .claude: ClaudeService()
         case .codex: CodexService()
         case .copilot: CopilotService()
+        case .antigravity: AntigravityService()
         }
     }
 }

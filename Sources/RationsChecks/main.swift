@@ -1,5 +1,6 @@
 // Minimal check runner: `swift run RationsChecks`. Exits non-zero on failure.
 // `--live` additionally fetches usage for every signed-in account and prints it.
+// `--antigravity-client` looks up Antigravity's client secret on this machine.
 import AppKit
 import Foundation
 import Network
@@ -255,6 +256,117 @@ check("copilot usage windows skip unlimited quotas") {
     return windows.count == 1 && windows[0].id == "premium_interactions" && windows[0].percentUsed == 18.5
         && windows[0].detail == "\(8151.formatted()) of \(10000.formatted()) left"  // locale-dependent grouping
         && windows[0].resetsAt?.timeIntervalSince1970 == 1_790_812_800
+}
+
+let antigravityJSON = """
+{
+  "groups": [
+    {"displayName": "Gemini Models", "buckets": [
+      {"bucketId": "gemini-weekly", "displayName": "Weekly Limit Remaining", "window": "weekly", "remainingFraction": 0.8, "resetTime": "2026-11-03T13:48:38Z"},
+      {"bucketId": "gemini-5h", "displayName": "Five Hour Limit Remaining", "window": "5h", "remainingFraction": 0.9, "resetTime": "2026-10-27T18:48:38Z"}]},
+    {"displayName": "Claude and GPT models", "buckets": [
+      {"bucketId": "3p-weekly", "displayName": "Weekly Limit Remaining", "window": "weekly", "remainingFraction": 0.95, "resetTime": "2026-11-03T13:48:38Z"},
+      {"bucketId": "3p-5h", "displayName": "Five Hour Limit Remaining", "window": "5h", "remainingFraction": 0.25, "resetTime": "2026-10-27T18:48:38Z"}]},
+    {"displayName": "Gemini 4 Argon", "buckets": [
+      {"bucketId": "gemini-argon-wtu-weekly", "displayName": "Gemini 4 Argon Weekly Limit", "window": "weekly", "remainingFraction": 0, "resetTime": "2026-11-03T13:48:38Z"},
+      {"bucketId": "off", "window": "weekly", "remainingFraction": 1, "disabled": true}]}
+  ]
+}
+"""
+
+check("antigravity headline is the most-used shared session and weekly bucket") {
+    let windows = try JSONDecoder.api.decode(AntigravityUsage.self, from: Data(antigravityJSON.utf8)).windows()
+    let snapshot = UsageSnapshot(windows: windows, fetchedAt: .now)
+    return windows.map(\.id) == ["3p-5h", "gemini-weekly", "gemini-5h", "3p-weekly", "gemini-argon-wtu-weekly"]
+        && windows.map(\.label) == ["Claude and GPT · Session (5h)", "Gemini · Weekly", "Gemini · Session (5h)",
+                                    "Claude and GPT · Weekly", "Gemini 4 Argon · Weekly"]
+        && windows.map { Int($0.percentUsed.rounded()) } == [75, 20, 10, 5, 100]
+        && snapshot.headline.map(\.menuBarRole) == [.session, .weekly]
+        && windows[0].resetsAt?.timeIntervalSince1970 == 1_793_126_918
+}
+
+check("antigravity starter accounts with weekly limits only") {
+    let json = """
+    {"groups": [{"displayName": "Gemini Models", "buckets": [
+      {"bucket_id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.5}]}]}
+    """
+    let windows = try JSONDecoder.api.decode(AntigravityUsage.self, from: Data(json.utf8)).windows()
+    return windows.map(\.id) == ["gemini-weekly"] && windows[0].menuBarRole == .weekly && windows[0].percentUsed == 50
+}
+
+check("antigravity plan prefers the paid tier") {
+    let json = #"{"cloudaicompanionProject": "p-1", "currentTier": {"id": "standard-tier", "name": "Standard"}, "paidTier": {"id": "g1-pro-tier", "name": "Google AI Pro"}}"#
+    let assist = try JSONDecoder.api.decode(CodeAssist.self, from: Data(json.utf8))
+    return assist.tierName == "Google AI Pro" && assist.cloudaicompanionProject == "p-1"
+}
+
+check("automatic gauge follows the session/weekly toggles") {
+    let windows = try JSONDecoder.api.decode(AntigravityUsage.self, from: Data(antigravityJSON.utf8)).windows()
+    let snapshot = UsageSnapshot(windows: windows, fetchedAt: .now)
+    let account = Account(provider: .antigravity, tag: "Y")
+    let gauges = Gauge.resolve(account, snapshot: snapshot, options: MenuBarOptions(session: false))
+    return gauges.count == 1 && gauges[0].tag == nil && !gauges[0].pinned && gauges[0].windows.map(\.id) == ["gemini-weekly"]
+}
+
+check("pinned gauges keep their order and skip limits not reported") {
+    let windows = try JSONDecoder.api.decode(AntigravityUsage.self, from: Data(antigravityJSON.utf8)).windows()
+    let snapshot = UsageSnapshot(windows: windows, fetchedAt: .now)
+    var account = Account(provider: .antigravity, tag: "Y")
+    account.gauges = [Gauge(windows: ["gemini-5h", "gemini-weekly"]), Gauge(tag: " YC ", windows: ["3p-5h", "gone"]),
+                      Gauge(tag: "Z", windows: ["gone"])]
+    // Session off must not hide a pinned 5-hour limit.
+    let gauges = Gauge.resolve(account, snapshot: snapshot, options: MenuBarOptions(session: false))
+    return gauges.map(\.tag) == [nil, "YC", "Z"] && gauges.allSatisfy(\.pinned)
+        && gauges.map { $0.windows.map(\.id) } == [["gemini-5h", "gemini-weekly"], ["3p-5h"], []]
+}
+
+check("pinned countdowns follow the limit's term") {
+    let reset = Date(timeIntervalSinceNow: 3600)
+    let session = UsageWindow(id: "3p-5h", label: "S", percentUsed: 100, resetsAt: reset, term: .short)
+    let fable = UsageWindow(id: "seven_day_overage_included", label: "F", percentUsed: 100, resetsAt: reset)
+    let options = MenuBarOptions(weekly: false, sessionCountdown: true, weeklyCountdown: true)
+    let sessionOnly = MenuBarOptions(sessionCountdown: true)
+    return options.showsCountdown(for: session, pinned: true) && options.showsCountdown(for: fable, pinned: true)
+        && !options.showsCountdown(for: fable) && fable.term == .long
+        && sessionOnly.showsCountdown(for: session, pinned: true) && !sessionOnly.showsCountdown(for: fable, pinned: true)
+}
+
+check("gauges round-trip and older accounts decode without them") {
+    var account = Account(provider: .claude, tag: "A")
+    account.gauges = [Gauge(tag: "F", windows: ["seven_day_overage_included"])]
+    let decoded = try JSONDecoder().decode(Account.self, from: JSONEncoder().encode(account))
+    let old = #"{"id": "00000000-0000-0000-0000-000000000001", "provider": "codex", "tag": "O", "name": ""}"#
+    let legacy = try JSONDecoder().decode(Account.self, from: Data(old.utf8))
+    return decoded == account && legacy.gauges == nil
+        && Gauge.nextTag(for: account) == "A2"
+}
+
+check("custom lists: spacers in order, first gauge keeps the account label") {
+    let windows = try JSONDecoder.api.decode(AntigravityUsage.self, from: Data(antigravityJSON.utf8)).windows()
+    let snapshot = UsageSnapshot(windows: windows, fetchedAt: .now)
+    let png = Data([0x89, 0x50, 0x4E, 0x47])
+    var account = Account(provider: .antigravity, tag: "Y")
+    // A spacer first, and a tag and icon on the first gauge that must not show.
+    account.gauges = [.newSpacer, Gauge(tag: "ZZ", image: png, windows: ["gemini-5h"]),
+                      Gauge(tag: "YC", image: png, windows: ["3p-5h"])]
+    let items = Gauge.resolve(account, snapshot: snapshot, options: MenuBarOptions())
+    account.gauges = [.newSpacer]
+    let spacersOnly = Gauge.resolve(account, snapshot: snapshot, options: MenuBarOptions())
+    return items.map { $0.spacer?.text } == ["|", nil, nil]
+        && items.map(\.tag) == [nil, nil, "YC"] && items.map(\.image) == [nil, nil, png]
+        && items[1].windows.map(\.id) == ["gemini-5h"] && items[1].pinned
+        // Nothing to show but spacers falls back to the automatic gauge.
+        && spacersOnly.count == 1 && !spacersOnly[0].pinned
+        && Gauge.initial(for: snapshot).map(\.windows) == [["3p-5h", "gemini-weekly"]]
+        && Gauge.moved([Gauge(), .newSpacer], at: 1, by: -1).map(\.kind) == [.spacer, .pinned]
+        && Gauge.moved([Gauge(), .newSpacer], at: 1, by: 5).map(\.kind) == [.pinned, .spacer]
+}
+
+check("gauge items decode with fields missing") {
+    let json = #"[{"windows": ["five_hour"]}, {"kind": "spacer", "spacer": {}}, {"kind": "automatic"}]"#
+    let items = try JSONDecoder().decode([Gauge].self, from: Data(json.utf8))
+    return items.map(\.kind) == [.pinned, .spacer, .pinned] && items[0].windows == ["five_hour"]
+        && items[1].spacer == Gauge.Spacer(text: "|", image: nil)
 }
 
 check("codex without rate limit") {
@@ -654,7 +766,26 @@ await check("hub server takes a body of the full size limit however it arrives")
     return statusLine.hasPrefix("HTTP/1.1 404")
 }
 
+check("antigravity client secrets are cut at their fixed length") {
+    // Built at run time: a literal would look like a real secret to scanners.
+    let prefix = "GOC" + "SPX-"
+    let a = prefix + String(repeating: "a", count: 27) + "_"
+    let b = prefix + String(repeating: "B", count: 26) + "-9"
+    let bytes = Data(("junk" + a + "name in McpVariable" + b + "\u{0}" + prefix + "short!" + prefix + "tooShortAtEnd").utf8)
+    return AntigravityClient.secrets(in: bytes) == [a, b]
+}
+
 // MARK: Live (optional)
+
+if CommandLine.arguments.contains("--antigravity-client") {
+    do {
+        let secret = try await AntigravityClient.secret()
+        print("ok   antigravity client secret found and accepted (\(secret.prefix(11))…)")
+    } catch {
+        print("FAIL antigravity client: \(error.localizedDescription)")
+        failures += 1
+    }
+}
 
 if CommandLine.arguments.contains("--live") {
     // Read-only on purpose: an AccountStore here would start polling loops that

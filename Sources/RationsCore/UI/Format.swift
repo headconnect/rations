@@ -9,8 +9,8 @@ enum Format {
         return days > 0 ? "\(days)d \(clock)" : clock
     }
 
-    static func menuBarValue(_ window: UsageWindow, options: MenuBarOptions, now: Date) -> String {
-        if options.showsCountdown(for: window), let reset = window.resetsAt {
+    static func menuBarValue(_ window: UsageWindow, options: MenuBarOptions, pinned: Bool = false, now: Date) -> String {
+        if options.showsCountdown(for: window, pinned: pinned), let reset = window.resetsAt {
             return menuBarCountdown(to: reset, from: now)
         }
         return percent(window.percentUsed)

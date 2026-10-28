@@ -26,14 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowObservers: [NSObjectProtocol] = []
     /// Created on first use; closing hides it (`isReleasedWhenClosed` off) so
     /// the account rows keep their state between visits.
-    private lazy var settingsWindow: NSWindow = {
-        let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(store: store, hub: hub)))
-        window.title = "Rations Settings"
-        window.styleMask = [.titled, .closable]
-        window.isReleasedWhenClosed = false
-        window.center()
-        return window
-    }()
+    private lazy var settingsWindow = SettingsWindow.make(store: store, hub: hub)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = Self.makeMainMenu()

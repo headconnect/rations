@@ -3,13 +3,14 @@
 [![Release](https://img.shields.io/github/v/release/headconnect/rations)](https://github.com/headconnect/rations/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-macOS menu bar app showing your Claude, Codex and GitHub Copilot plan usage
-with reset countdowns: the 5-hour session and weekly windows for Claude and
-Codex, the monthly premium-request quota for Copilot. It reads the same numbers
-as the usage pages on claude.ai, chatgpt.com and github.com.
+macOS menu bar app showing your Claude, Codex, GitHub Copilot and Google
+Antigravity plan usage with reset countdowns: the 5-hour session and weekly
+windows for Claude, Codex and Antigravity, the monthly premium-request quota for
+Copilot. It reads the same numbers as the usage pages on claude.ai, chatgpt.com
+and github.com, and Antigravity's `/usage`.
 
 Menu bar: `A ▤ 12%/4%  O ▤ 77%/47%  G ▤ 18%`, one entry per signed-in account,
-tagged by vendor unless you rename it (Anthropic, OpenAI, GitHub): a mini bar per
+tagged by vendor unless you rename it (Anthropic, OpenAI, GitHub, Y for Antigravity): a mini bar per
 limit and the percentages, short-term window first (session/weekly). Bars turn
 orange at 70 % and red at 90 %.
 
@@ -18,7 +19,7 @@ orange at 70 % and red at 90 %.
 ## Requirements
 
 - macOS 14 or later
-- Any of: a Claude Pro/Max/Team account, a ChatGPT account with Codex, a GitHub account with Copilot
+- Any of: a Claude Pro/Max/Team account, a ChatGPT account with Codex, a GitHub account with Copilot, a Google account with Antigravity
 
 ## Install
 
@@ -70,6 +71,11 @@ redirects back to `http://localhost:1455` when done. Nothing to paste.
 github.com/login/device. Enter the code there; Rations picks up the token by
 itself.
 
+**Antigravity.** Needs Antigravity or its `agy` CLI installed (see [How it
+works](#how-it-works)). Click *Sign in to Antigravity*. Your browser opens
+Google's sign-in and redirects back to `http://localhost:51121` when done.
+Nothing to paste.
+
 **Privately.** The arrow next to a sign-in button runs the same flow in a window
 that shares no cookies with your browser, so a second account of a provider is
 not signed straight back in as the first. Only one account can be signing in at
@@ -81,17 +87,36 @@ tokens, and so does removing the account.
 ## Settings
 
 The gear at the bottom of the popover opens the settings window; the plus next
-to it adds an account without going there.
+to it adds an account without going there. The window has a tab each for
+Accounts, Menu Bar, General, Usage Hub and About (version and GitHub links).
 
-**Accounts.** One row per account, in menu bar order; the chevrons move it.
-The photo button picks an image to show instead of the tag. The tag itself is
-up to 3 characters, emoji count as one, and left empty falls back to the
-provider's letter. Then an optional name such as "Office", and a trash button
-that removes the account and forgets its tokens. *Customise menu bar* gives
-that account its own copy of the toggles below; unticking it follows the
-global ones again.
+**Accounts.** The accounts in menu bar order on the left; drag to reorder, the
+plus below adds one. On the right, the selected account: sign in or out, then
+its label: a tag of up to 3 characters (emoji count as one, empty falls back
+to the provider's letter), an optional image shown instead, and an optional
+name such as "Office". *Customise menu bar* gives the account its own copy of
+the Menu Bar tab's toggles; turning it off follows those again. *Remove
+Account…* asks first, then signs out and forgets the tokens.
 
-**Global Default Menu Bar Appearance.** Defaults for accounts without their own. *Bars* and *Percentages*
+*Gauges* decides what reaches the menu bar. *Automatic* shows the provider's
+main limits, as described below. *Custom* lets you choose them: a list of
+gauges and spacers in order, starting from today's automatic limits. Each gauge
+is its own menu bar entry with up to two limits picked from what the account
+reports, e.g. Antigravity's Claude and GPT 5-hour and weekly limits as `YC`, or
+Claude's Fable allowance next to the usual `A`. *Add* adds a gauge or a spacer;
+the ⋯ menu moves or removes one, and the last gauge stays. A picked limit the
+provider stops reporting is kept and shows `–` until it is back. Custom gauges
+ignore the session/weekly toggles; their countdowns follow the session or
+weekly option by the limit's length.
+
+The first gauge shows the account's tag or icon from *Label* (its box says
+*Inherited*). Later gauges and spacers have their own, edited in the box at the
+start of the row: a tag of up to 3 characters or, switched to *Icon*, an image
+you click to change. An empty gauge tag uses the account's; a spacer's tag is
+`|` by default, and empty leaves a plain gap. Put a spacer last to separate the
+account from the next.
+
+**Menu Bar.** Defaults for accounts without their own. *Bars* and *Percentages*
 choose how each account is shown; at least one stays on. *Session* and *Weekly*
 choose which limits are shown, for providers that have both. Copilot has a
 single quota and always shows it.
@@ -105,7 +130,7 @@ extra API requests. Without a reset time the percentage stays; after the reset,
 
 Claude's popover also shows *Weekly · Fable* when Anthropic reports that
 allowance. Its percentage measures the Fable allowance itself; 100% means that
-allowance is exhausted. It never appears in the menu bar.
+allowance is exhausted. It appears in the menu bar only if you pick it in a custom gauge.
 
 **General.** *Popover opacity* runs from 30 % to fully opaque; the popover
 is translucent by default, and this keeps it readable over light windows.
@@ -142,7 +167,7 @@ the next check is due.
 
 ## How it works
 
-All three providers expose the usage numbers behind an OAuth token:
+All four providers expose the usage numbers behind an OAuth token:
 
 - Claude: `GET https://api.anthropic.com/api/oauth/usage`, the endpoint Claude
   Code uses for `/usage`. Sign-in is the same PKCE flow as Claude Code.
@@ -152,6 +177,18 @@ All three providers expose the usage numbers behind an OAuth token:
   Copilot editor extensions use. Sign-in is GitHub's device flow with the
   Copilot app's client id. Unlimited quotas (chat, completions on most plans)
   are hidden; the metered premium-request quota is shown with counts.
+- Antigravity: `POST https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`
+  (production `cloudcode-pa` if that 404s), the quota summary behind `agy
+  /usage`, for the Cloud Code project `loadCodeAssist` returns. Sign-in is a
+  Google PKCE flow with the Antigravity app's OAuth client. Unlike the other
+  providers' clients, Google's also needs a client secret at the token
+  endpoint. It is not confidential (Google and RFC 8252 say as much for
+  installed apps), but it is Google's, so Rations does not ship it: it reads it
+  from your own install (`~/.local/bin/agy`, Homebrew's `agy`, or the language
+  server in `Antigravity.app`), checks it with Google, and keeps it in memory. Each model group
+  (Gemini; Claude and GPT) has its own 5-hour and weekly limit; the menu bar
+  shows the most-used of each, the popover all of them, including model-only
+  limits such as Gemini 4 Argon's.
 
 These endpoints are not publicly documented, so field names may change. The
 Claude parser accepts any limit key that carries a `utilization` value; unknown
@@ -251,7 +288,7 @@ Layout:
 Sources/RationsCore/
   Model/       Provider, Account, MenuBarOptions, UsageWindow/UsageSnapshot, OAuthTokens, errors
   Auth/        PKCE, JWT claims, keychain vault + migration, localhost callback server, private sign-in window
-  Providers/   ClaudeService, CodexService, CopilotService, shared HTTP helpers
+  Providers/   ClaudeService, CodexService, CopilotService, AntigravityService, shared HTTP helpers
   Scheduler/   RefreshPolicy (pure), AccountStore (accounts + vault), AccountMonitor (state + polling loop)
   Hub/         usage hub for T3 Code: HubAPI (pure routing), HubServer (loopback HTTP), UsageHub (settings + state)
   UI/          status item + popover (App), menu bar label, per-account section, settings, formatting
