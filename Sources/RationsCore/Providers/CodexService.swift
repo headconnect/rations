@@ -110,7 +110,9 @@ struct CodexUsage: Decodable {
                 window.map {
                     UsageWindow(id: id, label: Self.label(seconds: $0.limitWindowSeconds), percentUsed: $0.usedPercent,
                                 resetsAt: $0.resetAt.map { Date(timeIntervalSince1970: $0) },
-                                menuBarRole: id == "primary" ? .session : .weekly)
+                                menuBarRole: id == "primary" ? .session : .weekly,
+                                // Some plans report only a weekly window, as primary.
+                                term: ($0.limitWindowSeconds ?? 18_000) < 86_400 ? .short : .long)
                 }
             }
     }

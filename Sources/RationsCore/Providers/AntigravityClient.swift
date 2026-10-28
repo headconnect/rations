@@ -20,8 +20,10 @@ enum AntigravityClient {
     /// network errors so being offline is not reported as a missing install.
     static func secret() async throws -> String {
         try await cache.value {
-            let found = installFiles().flatMap { url in
-                (try? Data(contentsOf: url, options: .alwaysMapped)).map(secrets) ?? []
+            let found = await cache.candidates {
+                installFiles().flatMap { url in
+                    (try? Data(contentsOf: url, options: .alwaysMapped)).map(secrets) ?? []
+                }
             }
             guard !found.isEmpty else {
                 throw ServiceError.antigravityClient("Install Antigravity or its agy CLI, then try again.")
@@ -30,6 +32,8 @@ enum AntigravityClient {
             for candidate in Array(NSOrderedSet(array: found)) as! [String] where try await accepts(candidate) {
                 return candidate
             }
+            // Perhaps an update since the scan; look again next time.
+            await cache.forgetScan()
             throw ServiceError.antigravityClient("The installed Antigravity has none Rations recognises; it may have changed.")
         }
     }
@@ -97,9 +101,21 @@ enum AntigravityClient {
     }
 
     /// One lookup at a time; a failure is not kept, so installing Antigravity
-    /// and trying again works without restarting Rations.
+    /// and trying again works without restarting Rations. What the scan found
+    /// is kept, so retrying after a network error does not read the binaries
+    /// again; an empty scan is not, for the same reason as above.
     private actor Cache {
         private var task: Task<String, Error>?
+        private var scanned: [String]?
+
+        func candidates(_ scan: @Sendable () -> [String]) -> [String] {
+            if let scanned { return scanned }
+            let found = scan()
+            if !found.isEmpty { scanned = found }
+            return found
+        }
+
+        func forgetScan() { scanned = nil }
 
         func value(_ load: @escaping @Sendable () async throws -> String) async throws -> String {
             if let task { return try await task.value }

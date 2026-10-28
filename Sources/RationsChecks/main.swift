@@ -384,6 +384,15 @@ check("gauge items decode with fields missing") {
         && items[1].spacer == Gauge.Spacer(text: "|", image: nil)
 }
 
+check("codex term follows the window length, not the slot") {
+    let json = #"{"rate_limit": {"primary_window": {"used_percent": 100, "limit_window_seconds": 604800, "reset_at": 1789213891}}}"#
+    let weeklyOnly = try JSONDecoder.api.decode(CodexUsage.self, from: Data(json.utf8)).windows()
+    let both = try JSONDecoder.api.decode(CodexUsage.self, from: Data(#"{"rate_limit": {"primary_window": {"used_percent": 1, "limit_window_seconds": 18000}, "secondary_window": {"used_percent": 2, "limit_window_seconds": 604800}}}"#.utf8)).windows()
+    let options = MenuBarOptions(sessionCountdown: false, weeklyCountdown: true)
+    return weeklyOnly.map(\.term) == [.long] && both.map(\.term) == [.short, .long]
+        && options.showsCountdown(for: weeklyOnly[0], pinned: true)
+}
+
 check("codex without rate limit") {
     try JSONDecoder.api.decode(CodexUsage.self, from: Data(#"{"rate_limit": null}"#.utf8)).windows().isEmpty
 }

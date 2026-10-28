@@ -65,7 +65,9 @@ private struct GaugeView: View {
             } else {
                 AccountLabel(account: account, height: 14)
             }
-            if gauge.windows.isEmpty {
+            // No limits chosen (or no usage yet). Pinned limits that are all
+            // missing still draw their empty tracks and dashes below.
+            if gauge.slots.isEmpty {
                 Text("–")
             } else {
                 if options.bars {
