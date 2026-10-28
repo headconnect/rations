@@ -90,9 +90,10 @@ enum AntigravityClient {
             return false
         } catch ServiceError.http(400, let body) {
             return body.contains("invalid_grant")
-        } catch is ServiceError {
+        } catch ServiceError.unauthorized {
             return false
         }
+        // Rate limits, 5xx and network errors say nothing about the secret.
     }
 
     /// One lookup at a time; a failure is not kept, so installing Antigravity

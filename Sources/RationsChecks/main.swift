@@ -318,6 +318,8 @@ check("pinned gauges keep their order and skip limits not reported") {
     let gauges = Gauge.resolve(account, snapshot: snapshot, options: MenuBarOptions(session: false))
     return gauges.map(\.tag) == [nil, "YC", "Z"] && gauges.allSatisfy(\.pinned)
         && gauges.map { $0.windows.map(\.id) } == [["gemini-5h", "gemini-weekly"], ["3p-5h"], []]
+        // A missing limit keeps its slot.
+        && gauges.map { $0.slots.map { $0?.id } } == [["gemini-5h", "gemini-weekly"], ["3p-5h", nil], [nil]]
 }
 
 check("pinned countdowns follow the limit's term") {
@@ -357,9 +359,22 @@ check("custom lists: spacers in order, first gauge keeps the account label") {
         && items[1].windows.map(\.id) == ["gemini-5h"] && items[1].pinned
         // Nothing to show but spacers falls back to the automatic gauge.
         && spacersOnly.count == 1 && !spacersOnly[0].pinned
-        && Gauge.initial(for: snapshot).map(\.windows) == [["3p-5h", "gemini-weekly"]]
+        && Gauge.initial(for: snapshot, options: MenuBarOptions()).map(\.windows) == [["3p-5h", "gemini-weekly"]]
+        // Starting Custom keeps a hidden session hidden.
+        && Gauge.initial(for: snapshot, options: MenuBarOptions(session: false)).map(\.windows) == [["gemini-weekly"]]
         && Gauge.moved([Gauge(), .newSpacer], at: 1, by: -1).map(\.kind) == [.spacer, .pinned]
         && Gauge.moved([Gauge(), .newSpacer], at: 1, by: 5).map(\.kind) == [.pinned, .spacer]
+}
+
+check("a malformed gauge list never costs the account list") {
+    let json = #"""
+    [{"id": "00000000-0000-0000-0000-000000000001", "provider": "claude", "tag": "A", "name": "",
+      "gauges": [42, {"id": "not-a-uuid", "tag": 7, "windows": "five_hour"}, {"windows": ["seven_day"]}]},
+     {"id": "00000000-0000-0000-0000-000000000002", "provider": "codex", "tag": "O", "name": "", "gauges": "nope"}]
+    """#
+    let accounts = try JSONDecoder().decode([Account].self, from: Data(json.utf8))
+    return accounts.count == 2 && accounts[0].gauges?.map(\.windows) == [[], ["seven_day"]]
+        && accounts[0].gauges?[0].tag == "" && accounts[1].gauges == nil
 }
 
 check("gauge items decode with fields missing") {
